@@ -107,25 +107,38 @@ hideMs    := 2000
 osdAlpha  := 242
 osdHideAt := 0
 
-osd := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
-osd.MarginX := 10
-osd.MarginY := 12
-osd.BackColor := "202020"
-osd.SetFont("s10 cAAAAAA", "Segoe UI")
-txtLabel := osd.AddText("Center w" osdW " h22", "")
-osd.SetFont("s22 cFFFFFF Bold", "Segoe UI")
-txtValue := osd.AddText("Center w" osdW, "")
-osd.Show("NoActivate x" osdX " y" osdY)
-WinSetTransparent(242, osd)
-osd.Hide()
+osd      := ""
+txtLabel := ""
+txtValue := ""
 
-DllCall("dwmapi\DwmSetWindowAttribute",
-    "Ptr", osd.Hwnd, "UInt", 33, "UInt*", 2, "UInt", 4)
-DllCall("dwmapi\DwmSetWindowAttribute",
-    "Ptr", osd.Hwnd, "UInt", 2, "UInt*", 2, "UInt", 4)
+CreateOSD() {
+    global osd, txtLabel, txtValue, osdW, osdX, osdY
+    SetTimer(OSDTick, 0)
+    if IsObject(osd)
+        try osd.Destroy()
+    osd := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
+    osd.MarginX := 10
+    osd.MarginY := 12
+    osd.BackColor := "202020"
+    osd.SetFont("s10 cAAAAAA", "Segoe UI")
+    txtLabel := osd.AddText("Center w" osdW " h22", "")
+    osd.SetFont("s22 cFFFFFF Bold", "Segoe UI")
+    txtValue := osd.AddText("Center w" osdW, "")
+    osd.Show("NoActivate x" osdX " y" osdY)
+    WinSetTransparent(242, osd)
+    osd.Hide()
+    DllCall("dwmapi\DwmSetWindowAttribute",
+        "Ptr", osd.Hwnd, "UInt", 33, "UInt*", 2, "UInt", 4)
+    DllCall("dwmapi\DwmSetWindowAttribute",
+        "Ptr", osd.Hwnd, "UInt", 2, "UInt*", 2, "UInt", 4)
+}
+
+CreateOSD()
 
 ShowOSD(label, value, durationMs := 0, bgColor := "202020") {
-    global osd, txtLabel, txtValue, hideMs, osdAlpha, osdHideAt
+    global osd, txtLabel, txtValue, hideMs, osdAlpha, osdHideAt, osdX, osdY
+    if !IsObject(osd)
+        CreateOSD()
     dur := durationMs > 0 ? durationMs : hideMs
     osd.BackColor := bgColor
     if (bgColor = "801010")
@@ -137,7 +150,8 @@ ShowOSD(label, value, durationMs := 0, bgColor := "202020") {
     osdAlpha  := 242
     osdHideAt := A_TickCount + dur
     WinSetTransparent(242, osd)
-    osd.Show("NoActivate")
+    WinSetAlwaysOnTop(1, osd)
+    osd.Show("NoActivate x" osdX " y" osdY)
     SetTimer(OSDTick, 25)
 }
 
@@ -236,22 +250,26 @@ $F15:: {
 
 ; --- Profil enceintes ---
 $^!F1:: {
-    global activeKey, muted
+    global activeKey, muted, osdX, osdY, osdW
     activeKey := "enceintes"
     muted := false
     Send("^!{F1}")
     p := GetProfile()
     p.cur := p.default
+    osdX := (A_ScreenWidth - osdW - 20) // 2
+    osdY := A_ScreenHeight - 165
     ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
 }
 
 ; --- Profil casque ---
 $^!F2:: {
-    global activeKey, muted
+    global activeKey, muted, osdX, osdY, osdW
     activeKey := "casque"
     muted := false
     Send("^!{F2}")
     p := GetProfile()
     p.cur := p.default
+    osdX := (A_ScreenWidth - osdW - 20) // 2
+    osdY := A_ScreenHeight - 165
     ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
 }
