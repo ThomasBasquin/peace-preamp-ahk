@@ -48,7 +48,7 @@ profiles["enceintes"] := {
     warnZone  :   1.5
 }
 
-activeKey := "enceintes"
+activeKey := DetectActiveProfile()
 profiles["casque"].cur    := profiles["casque"].default
 profiles["enceintes"].cur := profiles["enceintes"].default
 muted := false
@@ -194,6 +194,35 @@ ReadDeviceRef(peaceProfileFile) {
     return ""
 }
 
+; Lit le "Device GUID=" déclaré dans un profil .peace
+ReadProfileGuid(peaceProfileFile) {
+    loop read, peaceProfileFile {
+        if RegExMatch(A_LoopReadLine, "^Device GUID=(\{[0-9a-fA-F-]+\})", &m)
+            return m[1]
+    }
+    return ""
+}
+
+; Détecte quel profil est réellement chargé dans Peace au démarrage du script,
+; en comparant le GUID du device actif (écrit par Peace dans peace.txt) à celui
+; déclaré dans chaque profil. Évite de supposer "enceintes" à tort si la
+; dernière session s'est terminée sur "casque".
+DetectActiveProfile() {
+    global peaceFile, casqueFile, enceintesFile
+    currentGuid := ""
+    loop read, peaceFile {
+        if RegExMatch(A_LoopReadLine, "^Device:.*(\{[0-9a-fA-F-]+\})", &m) {
+            currentGuid := m[1]
+            break
+        }
+    }
+    if (currentGuid = "")
+        return "enceintes"
+    if (ReadProfileGuid(casqueFile) = currentGuid)
+        return "casque"
+    return "enceintes"
+}
+
 ; Cherche parmi les endpoints AUDIO ACTIFS celui dont jack+produit correspondent
 FindActiveDeviceGuid(jack, product) {
     global MMRenderKey, PKEY_JackName, PKEY_ProductName
@@ -216,9 +245,10 @@ FindActiveDeviceGuid(jack, product) {
 }
 
 ; Vérifie que le périphérique du profil est bien branché/actif.
-; Si oui : corrige le "Device GUID=" dans le fichier s'il a dérivé, renvoie true.
+; Si oui : corrige le "Device GUID=" dans le fichier s'il a dérivé, renvoie true
+;          et ressort le GUID actif via outGuid (pour switcher la sortie Windows).
 ; Si non (éteint/débranché) : renvoie false sans toucher au fichier.
-EnsureDeviceReady(peaceProfileFile) {
+EnsureDeviceReady(peaceProfileFile, &outGuid := "") {
     ref := ReadDeviceRef(peaceProfileFile)
     if !IsObject(ref)
         return true  ; pas de ligne Device= trouvée, on ne bloque pas
@@ -244,7 +274,28 @@ EnsureDeviceReady(peaceProfileFile) {
         f.Write(content)
         f.Close()
     }
+    outGuid := activeGuid
     return true
+}
+
+; ============================================================
+;  SORTIE AUDIO WINDOWS PAR DÉFAUT
+; ============================================================
+; Bascule le device de lecture par défaut de Windows (les 3 rôles :
+; multimédia, communications, console) via l'interface COM non documentée
+; IPolicyConfig — le même mécanisme utilisé par nircmd / EarTrumpet.
+
+CLSID_PolicyConfig := "{870af99c-171d-4f9e-af0d-e63df40c2bc9}"
+IID_IPolicyConfig  := "{f8679f50-850a-41cf-9c72-430f290290c8}"
+
+SetDefaultAudioDevice(guid) {
+    global CLSID_PolicyConfig, IID_IPolicyConfig
+    deviceId := "{0.0.0.00000000}." guid
+    try {
+        pPolicyConfig := ComObject(CLSID_PolicyConfig, IID_IPolicyConfig)
+        for role in [0, 1, 2]  ; eConsole, eMultimedia, eCommunications
+            ComCall(13, pPolicyConfig, "wstr", deviceId, "int", role)
+    }
 }
 
 ; ============================================================
@@ -328,10 +379,12 @@ $F15:: {
 ; --- Profil enceintes ---
 $^!F1:: {
     global activeKey, muted, osdX, osdY, osdW, enceintesFile
-    if !EnsureDeviceReady(enceintesFile) {
+    if !EnsureDeviceReady(enceintesFile, &guid) {
         ShowOSD("Profil", "Enceintes ⚠", 2500, "801010")
         return
     }
+    if (guid != "")
+        SetDefaultAudioDevice(guid)
     activeKey := "enceintes"
     muted := false
     Send("^!{F1}")
@@ -345,10 +398,12 @@ $^!F1:: {
 ; --- Profil casque ---
 $^!F2:: {
     global activeKey, muted, osdX, osdY, osdW, casqueFile
-    if !EnsureDeviceReady(casqueFile) {
+    if !EnsureDeviceReady(casqueFile, &guid) {
         ShowOSD("Profil", "Casque ⚠", 2500, "801010")
         return
     }
+    if (guid != "")
+        SetDefaultAudioDevice(guid)
     activeKey := "casque"
     muted := false
     Send("^!{F2}")
