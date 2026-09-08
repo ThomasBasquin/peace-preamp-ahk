@@ -18,7 +18,9 @@ if !A_IsAdmin {
     ExitApp()
 }
 
-peaceFile := "C:\Program Files\EqualizerAPO\config\peace.txt"
+peaceFile      := "C:\Program Files\EqualizerAPO\config\peace.txt"
+casqueFile     := "C:\Program Files\EqualizerAPO\config\Casque.peace"
+enceintesFile  := "C:\Program Files\EqualizerAPO\config\Enceintes.peace"
 
 ; ============================================================
 ;  CONFIGURATION DES PROFILS
@@ -142,7 +144,7 @@ ShowOSD(label, value, durationMs := 0, bgColor := "202020") {
     dur := durationMs > 0 ? durationMs : hideMs
     osd.BackColor := bgColor
     if (bgColor = "801010")
-        txtLabel.SetFont("s13 cFFCCCC Bold", "Segoe UI")
+        txtLabel.SetFont("s10 cFFCCCC norm", "Segoe UI")
     else
         txtLabel.SetFont("s10 cAAAAAA norm", "Segoe UI")
     txtLabel.Text := label
@@ -168,6 +170,81 @@ OSDTick() {
         return
     }
     WinSetTransparent(osdAlpha, osd)
+}
+
+; ============================================================
+;  DEVICES AUDIO — anti-dérive GUID (DAC USB qui change d'identité)
+; ============================================================
+; Chaque profil .peace est verrouillé sur un "Device GUID" Windows figé.
+; Un DAC USB peut se voir attribuer un nouveau GUID par
+; Windows à chaque reconnexion/veille, ce qui rend le profil incapable de
+; retrouver le périphérique → le switch ne fait plus rien, silencieusement.
+; On revérifie donc le GUID juste avant chaque switch et on le corrige au vol.
+
+MMRenderKey := "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+PKEY_JackName    := "{a45c254e-df1c-4efd-8020-67d146a850e0},2"
+PKEY_ProductName := "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+
+; Lit "Device=<jack>, <produit>" dans le fichier .peace
+ReadDeviceRef(peaceProfileFile) {
+    loop read, peaceProfileFile {
+        if RegExMatch(A_LoopReadLine, "^Device=([^,]+),\s*(.+)$", &m)
+            return { jack: Trim(m[1]), product: Trim(m[2]) }
+    }
+    return ""
+}
+
+; Cherche parmi les endpoints AUDIO ACTIFS celui dont jack+produit correspondent
+FindActiveDeviceGuid(jack, product) {
+    global MMRenderKey, PKEY_JackName, PKEY_ProductName
+    loop reg, MMRenderKey, "K" {
+        guidKey := A_LoopRegName
+        try state := RegRead(MMRenderKey "\" guidKey, "DeviceState")
+        catch
+            continue
+        if ((state & 0xF) != 1)   ; pas "Active"
+            continue
+        try {
+            j := RegRead(MMRenderKey "\" guidKey "\Properties", PKEY_JackName)
+            p := RegRead(MMRenderKey "\" guidKey "\Properties", PKEY_ProductName)
+        } catch
+            continue
+        if (j = jack && p = product)
+            return guidKey
+    }
+    return ""
+}
+
+; Vérifie que le périphérique du profil est bien branché/actif.
+; Si oui : corrige le "Device GUID=" dans le fichier s'il a dérivé, renvoie true.
+; Si non (éteint/débranché) : renvoie false sans toucher au fichier.
+EnsureDeviceReady(peaceProfileFile) {
+    ref := ReadDeviceRef(peaceProfileFile)
+    if !IsObject(ref)
+        return true  ; pas de ligne Device= trouvée, on ne bloque pas
+
+    activeGuid := FindActiveDeviceGuid(ref.jack, ref.product)
+    if (activeGuid = "")
+        return false
+
+    content := ""
+    changed := false
+    loop read, peaceProfileFile {
+        line := A_LoopReadLine
+        if RegExMatch(line, "^Device GUID=\{[0-9a-fA-F-]+\}") {
+            newLine := "Device GUID=" activeGuid
+            if (line != newLine)
+                changed := true
+            line := newLine
+        }
+        content .= line "`r`n"
+    }
+    if changed {
+        f := FileOpen(peaceProfileFile, "w")
+        f.Write(content)
+        f.Close()
+    }
+    return true
 }
 
 ; ============================================================
@@ -250,7 +327,11 @@ $F15:: {
 
 ; --- Profil enceintes ---
 $^!F1:: {
-    global activeKey, muted, osdX, osdY, osdW
+    global activeKey, muted, osdX, osdY, osdW, enceintesFile
+    if !EnsureDeviceReady(enceintesFile) {
+        ShowOSD("Profil", "Enceintes ⚠", 2500, "801010")
+        return
+    }
     activeKey := "enceintes"
     muted := false
     Send("^!{F1}")
@@ -263,7 +344,11 @@ $^!F1:: {
 
 ; --- Profil casque ---
 $^!F2:: {
-    global activeKey, muted, osdX, osdY, osdW
+    global activeKey, muted, osdX, osdY, osdW, casqueFile
+    if !EnsureDeviceReady(casqueFile) {
+        ShowOSD("Profil", "Casque ⚠", 2500, "801010")
+        return
+    }
     activeKey := "casque"
     muted := false
     Send("^!{F2}")
