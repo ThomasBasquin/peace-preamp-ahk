@@ -23,6 +23,23 @@ casqueFile     := "C:\Program Files\EqualizerAPO\config\Casque.peace"
 enceintesFile  := "C:\Program Files\EqualizerAPO\config\Enceintes.peace"
 
 ; ============================================================
+;  JOURNAL DE DIAGNOSTIC
+; ============================================================
+; Log horodaté (hors du dépôt git) pour pouvoir rejouer après coup ce qui
+; s'est passé lors d'un switch casque/enceintes qui semble avoir raté.
+logFile := A_Temp "\peace_preamp.log"
+
+LogEvent(msg) {
+    global logFile
+    try {
+        if FileExist(logFile) && FileGetSize(logFile) > 262144
+            FileDelete(logFile)
+    }
+    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss") "." Format("{:03}", A_MSec)
+    try FileAppend(ts "  " msg "`r`n", logFile, "UTF-8")
+}
+
+; ============================================================
 ;  CONFIGURATION DES PROFILS
 ; ============================================================
 
@@ -137,6 +154,12 @@ CreateOSD() {
 
 CreateOSD()
 
+; Affichage initial : quel profil/périphérique est actif dès le lancement du
+; script (utile notamment au démarrage de Windows, sans avoir à toucher un
+; raccourci pour le savoir).
+LogEvent("Démarrage script — profil actif détecté : " profiles[activeKey].label " (" Fmt(profiles[activeKey].cur) " dB)")
+ShowOSD("Démarrage — " profiles[activeKey].label, Fmt(profiles[activeKey].cur) " dB", 3500)
+
 ShowOSD(label, value, durationMs := 0, bgColor := "202020") {
     global osd, txtLabel, txtValue, hideMs, osdAlpha, osdHideAt, osdX, osdY
     if !IsObject(osd)
@@ -244,18 +267,39 @@ FindActiveDeviceGuid(jack, product) {
     return ""
 }
 
+; Comme FindActiveDeviceGuid, mais retente pendant quelques centaines de ms.
+; Utile car un DAC USB qui vient d'être branché/réveillé met parfois un
+; instant avant que Windows ne le marque "Active" dans le registre — sans
+; retry, un switch pile à ce moment-là échoue silencieusement.
+FindActiveDeviceGuidRetry(jack, product, maxWaitMs := 1200, intervalMs := 150) {
+    start := A_TickCount
+    loop {
+        g := FindActiveDeviceGuid(jack, product)
+        if (g != "")
+            return g
+        if (A_TickCount - start >= maxWaitMs)
+            return ""
+        Sleep(intervalMs)
+    }
+}
+
 ; Vérifie que le périphérique du profil est bien branché/actif.
 ; Si oui : corrige le "Device GUID=" dans le fichier s'il a dérivé, renvoie true
 ;          et ressort le GUID actif via outGuid (pour switcher la sortie Windows).
 ; Si non (éteint/débranché) : renvoie false sans toucher au fichier.
 EnsureDeviceReady(peaceProfileFile, &outGuid := "") {
     ref := ReadDeviceRef(peaceProfileFile)
-    if !IsObject(ref)
+    if !IsObject(ref) {
+        LogEvent("EnsureDeviceReady: pas de ligne Device= dans " peaceProfileFile " -> on laisse passer")
         return true  ; pas de ligne Device= trouvée, on ne bloque pas
+    }
 
-    activeGuid := FindActiveDeviceGuid(ref.jack, ref.product)
-    if (activeGuid = "")
+    activeGuid := FindActiveDeviceGuidRetry(ref.jack, ref.product)
+    if (activeGuid = "") {
+        LogEvent("EnsureDeviceReady: ÉCHEC — '" ref.jack "' / '" ref.product "' introuvable parmi les endpoints actifs (après retry)")
         return false
+    }
+    LogEvent("EnsureDeviceReady: '" ref.jack "' / '" ref.product "' -> " activeGuid)
 
     content := ""
     changed := false
@@ -273,9 +317,35 @@ EnsureDeviceReady(peaceProfileFile, &outGuid := "") {
         f := FileOpen(peaceProfileFile, "w")
         f.Write(content)
         f.Close()
+        LogEvent("EnsureDeviceReady: GUID corrigé dans " peaceProfileFile " (dérive détectée)")
     }
     outGuid := activeGuid
     return true
+}
+
+; Après avoir envoyé le hotkey de switch à Peace, on ne peut pas supposer
+; que le changement a réussi : on relit peace.txt jusqu'à ce que la ligne
+; "Device:" corresponde bien au GUID attendu (ou jusqu'au timeout). Ça
+; confirme réellement que Peace a chargé le bon profil, au lieu de deviner
+; que le Preamp vaut la valeur "default" codée en dur.
+ConfirmProfileApplied(expectedGuid, timeoutMs := 1000, intervalMs := 100) {
+    global peaceFile
+    start := A_TickCount
+    loop {
+        actualGuid := "", actualPreamp := ""
+        loop read, peaceFile {
+            line := A_LoopReadLine
+            if InStr(line, "Device:") && RegExMatch(line, "(\{[0-9a-fA-F-]+\})", &m)
+                actualGuid := m[1]
+            else if RegExMatch(line, "^Preamp:\s*([-\d.]+)", &m2)
+                actualPreamp := Float(m2[1])
+        }
+        if (actualGuid = expectedGuid)
+            return actualPreamp = "" ? 0.0 : actualPreamp
+        if (A_TickCount - start >= timeoutMs)
+            return ""
+        Sleep(intervalMs)
+    }
 }
 
 ; ============================================================
@@ -379,8 +449,9 @@ $F15:: {
 ; --- Profil enceintes ---
 $^!F1:: {
     global activeKey, muted, osdX, osdY, osdW, enceintesFile
+    LogEvent("Ctrl+Alt+F1 pressé -> demande profil Enceintes")
     if !EnsureDeviceReady(enceintesFile, &guid) {
-        ShowOSD("Profil", "Enceintes ⚠", 2500, "801010")
+        ShowOSD("Profil", "Enceintes ⚠ introuvable", 3000, "801010")
         return
     }
     if (guid != "")
@@ -389,17 +460,26 @@ $^!F1:: {
     muted := false
     Send("^!{F1}")
     p := GetProfile()
-    p.cur := p.default
+    result := ConfirmProfileApplied(guid)
     osdX := (A_ScreenWidth - osdW - 20) // 2
     osdY := A_ScreenHeight - 165
-    ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
+    if (result = "") {
+        LogEvent("⚠ Switch Enceintes envoyé à Peace mais non confirmé dans peace.txt (timeout)")
+        p.cur := p.default
+        ShowOSD("Profil", p.label " (non confirmé ⚠)", 3000, "804000")
+    } else {
+        p.cur := result
+        LogEvent("✓ Switch Enceintes confirmé, Preamp=" Fmt(p.cur) " dB")
+        ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
+    }
 }
 
 ; --- Profil casque ---
 $^!F2:: {
     global activeKey, muted, osdX, osdY, osdW, casqueFile
+    LogEvent("Ctrl+Alt+F2 pressé -> demande profil Casque")
     if !EnsureDeviceReady(casqueFile, &guid) {
-        ShowOSD("Profil", "Casque ⚠", 2500, "801010")
+        ShowOSD("Profil", "Casque ⚠ introuvable", 3000, "801010")
         return
     }
     if (guid != "")
@@ -408,8 +488,16 @@ $^!F2:: {
     muted := false
     Send("^!{F2}")
     p := GetProfile()
-    p.cur := p.default
+    result := ConfirmProfileApplied(guid)
     osdX := (A_ScreenWidth - osdW - 20) // 2
     osdY := A_ScreenHeight - 165
-    ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
+    if (result = "") {
+        LogEvent("⚠ Switch Casque envoyé à Peace mais non confirmé dans peace.txt (timeout)")
+        p.cur := p.default
+        ShowOSD("Profil", p.label " (non confirmé ⚠)", 3000, "804000")
+    } else {
+        p.cur := result
+        LogEvent("✓ Switch Casque confirmé, Preamp=" Fmt(p.cur) " dB")
+        ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
+    }
 }

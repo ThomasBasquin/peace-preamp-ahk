@@ -10,6 +10,8 @@ Script AutoHotkey v2 pour contrôler le preamp de [Peace](https://sourceforge.ne
 - Avertissement visuel à l'approche du plafond
 - Synchronisation périodique avec `peace.txt` (détecte les changements externes)
 - Réinstallation automatique du hook clavier (contourne l'éjection par certains jeux)
+- OSD affichant le profil actif dès le lancement du script
+- Nouvelle tentative automatique (~1.2 s) si le périphérique du profil visé n'est pas encore détecté comme actif (DAC USB qui se réveille), et confirmation réelle (pas supposée) que Peace a bien chargé le profil avant de mettre à jour l'OSD
 
 ## Prérequis
 
@@ -32,7 +34,12 @@ Script AutoHotkey v2 pour contrôler le preamp de [Peace](https://sourceforge.ne
 ## Installation
 
 1. Installer les prérequis ci-dessus
-2. Lancer `peace_preamp.ahk` — le script demande les droits administrateur (nécessaire pour écrire dans `Program Files\EqualizerAPO\config\peace.txt`)
+2. Le script a besoin des droits administrateur (il écrit dans `Program Files\EqualizerAPO\config\`). Pour éviter une invite UAC à chaque démarrage de Windows, il est lancé via une tâche planifiée **"Peace Preamp Controller"** (déclencheur : ouverture de session, niveau d'exécution : le plus élevé) plutôt que via un raccourci dans le dossier Démarrage — une tâche planifiée en élévation maximale ne redemande pas de confirmation UAC.
+3. Lancé manuellement (double-clic), le script s'auto-élève via `RunAs` et redemande donc l'UAC — c'est normal, ça ne concerne que ce cas d'usage.
+
+## Diagnostic
+
+Chaque tentative de switch de profil (recherche du périphérique, résultat, confirmation) est journalisée dans `%TEMP%\peace_preamp.log` (rotation automatique au-delà de 256 Ko). Utile pour comprendre après coup un switch casque/enceintes qui semble avoir échoué.
 
 ## Configuration
 
