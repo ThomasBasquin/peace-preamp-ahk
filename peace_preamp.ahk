@@ -21,6 +21,8 @@ if !A_IsAdmin {
 peaceFile      := "C:\Program Files\EqualizerAPO\config\peace.txt"
 casqueFile     := "C:\Program Files\EqualizerAPO\config\Casque.peace"
 enceintesFile  := "C:\Program Files\EqualizerAPO\config\Enceintes.peace"
+peaceExe       := "C:\Program Files\EqualizerAPO\config\Peace.exe"
+peaceDir       := "C:\Program Files\EqualizerAPO\config"
 
 ; ============================================================
 ;  JOURNAL DE DIAGNOSTIC
@@ -328,7 +330,7 @@ EnsureDeviceReady(peaceProfileFile, &outGuid := "") {
 ; "Device:" corresponde bien au GUID attendu (ou jusqu'au timeout). Ça
 ; confirme réellement que Peace a chargé le bon profil, au lieu de deviner
 ; que le Preamp vaut la valeur "default" codée en dur.
-ConfirmProfileApplied(expectedGuid, timeoutMs := 1000, intervalMs := 100) {
+ConfirmProfileApplied(expectedGuid, timeoutMs := 1500, intervalMs := 100) {
     global peaceFile
     start := A_TickCount
     loop {
@@ -346,6 +348,20 @@ ConfirmProfileApplied(expectedGuid, timeoutMs := 1000, intervalMs := 100) {
             return ""
         Sleep(intervalMs)
     }
+}
+
+; Peace garde en mémoire une association périphérique↔profil qui ne se
+; rafraîchit pas toujours quand un DAC USB change de GUID (même si notre
+; fichier .peace est déjà correct) — le switch échoue alors silencieusement
+; jusqu'à ce que Peace soit relancé. On automatise ce redémarrage comme
+; filet de récupération quand une confirmation échoue.
+RestartPeace() {
+    global peaceExe, peaceDir
+    LogEvent("Redémarrage de Peace (cache périphérique probablement périmé)")
+    ProcessClose("Peace.exe")
+    ProcessWaitClose("Peace.exe", 3)
+    try Run(peaceExe, peaceDir)
+    Sleep(1500)  ; laisse Peace s'initialiser et réenregistrer ses hotkeys
 }
 
 ; ============================================================
@@ -461,15 +477,23 @@ $^!F1:: {
     Send("^!{F1}")
     p := GetProfile()
     result := ConfirmProfileApplied(guid)
+    recovered := false
+    if (result = "") {
+        LogEvent("⚠ Switch Enceintes non confirmé, tentative de récupération (redémarrage de Peace)")
+        RestartPeace()
+        Send("^!{F1}")
+        result := ConfirmProfileApplied(guid, 2500)
+        recovered := true
+    }
     osdX := (A_ScreenWidth - osdW - 20) // 2
     osdY := A_ScreenHeight - 165
     if (result = "") {
-        LogEvent("⚠ Switch Enceintes envoyé à Peace mais non confirmé dans peace.txt (timeout)")
+        LogEvent("⚠ Switch Enceintes toujours non confirmé après redémarrage de Peace")
         p.cur := p.default
         ShowOSD("⚠ " p.label, "Non confirmé", 3000, "804000")
     } else {
         p.cur := result
-        LogEvent("✓ Switch Enceintes confirmé, Preamp=" Fmt(p.cur) " dB")
+        LogEvent("✓ Switch Enceintes confirmé" (recovered ? " (après redémarrage de Peace)" : "") ", Preamp=" Fmt(p.cur) " dB")
         ShowOSD(p.label, Fmt(p.cur) " dB", 2500)
     }
 }
@@ -489,15 +513,23 @@ $^!F2:: {
     Send("^!{F2}")
     p := GetProfile()
     result := ConfirmProfileApplied(guid)
+    recovered := false
+    if (result = "") {
+        LogEvent("⚠ Switch Casque non confirmé, tentative de récupération (redémarrage de Peace)")
+        RestartPeace()
+        Send("^!{F2}")
+        result := ConfirmProfileApplied(guid, 2500)
+        recovered := true
+    }
     osdX := (A_ScreenWidth - osdW - 20) // 2
     osdY := A_ScreenHeight - 165
     if (result = "") {
-        LogEvent("⚠ Switch Casque envoyé à Peace mais non confirmé dans peace.txt (timeout)")
+        LogEvent("⚠ Switch Casque toujours non confirmé après redémarrage de Peace")
         p.cur := p.default
         ShowOSD("⚠ " p.label, "Non confirmé", 3000, "804000")
     } else {
         p.cur := result
-        LogEvent("✓ Switch Casque confirmé, Preamp=" Fmt(p.cur) " dB")
+        LogEvent("✓ Switch Casque confirmé" (recovered ? " (après redémarrage de Peace)" : "") ", Preamp=" Fmt(p.cur) " dB")
         ShowOSD(p.label, Fmt(p.cur) " dB", 2500)
     }
 }
