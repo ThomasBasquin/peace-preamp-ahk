@@ -451,7 +451,7 @@ $^!F1:: {
     global activeKey, muted, osdX, osdY, osdW, enceintesFile
     LogEvent("Ctrl+Alt+F1 pressé -> demande profil Enceintes")
     if !EnsureDeviceReady(enceintesFile, &guid) {
-        ShowOSD("Profil", "Enceintes ⚠ introuvable", 3000, "801010")
+        ShowOSD("⚠ Enceintes", "Non détecté", 3000, "801010")
         return
     }
     if (guid != "")
@@ -466,11 +466,11 @@ $^!F1:: {
     if (result = "") {
         LogEvent("⚠ Switch Enceintes envoyé à Peace mais non confirmé dans peace.txt (timeout)")
         p.cur := p.default
-        ShowOSD("Profil", p.label " (non confirmé ⚠)", 3000, "804000")
+        ShowOSD("⚠ " p.label, "Non confirmé", 3000, "804000")
     } else {
         p.cur := result
         LogEvent("✓ Switch Enceintes confirmé, Preamp=" Fmt(p.cur) " dB")
-        ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
+        ShowOSD(p.label, Fmt(p.cur) " dB", 2500)
     }
 }
 
@@ -479,7 +479,7 @@ $^!F2:: {
     global activeKey, muted, osdX, osdY, osdW, casqueFile
     LogEvent("Ctrl+Alt+F2 pressé -> demande profil Casque")
     if !EnsureDeviceReady(casqueFile, &guid) {
-        ShowOSD("Profil", "Casque ⚠ introuvable", 3000, "801010")
+        ShowOSD("⚠ Casque", "Non détecté", 3000, "801010")
         return
     }
     if (guid != "")
@@ -494,10 +494,10 @@ $^!F2:: {
     if (result = "") {
         LogEvent("⚠ Switch Casque envoyé à Peace mais non confirmé dans peace.txt (timeout)")
         p.cur := p.default
-        ShowOSD("Profil", p.label " (non confirmé ⚠)", 3000, "804000")
+        ShowOSD("⚠ " p.label, "Non confirmé", 3000, "804000")
     } else {
         p.cur := result
         LogEvent("✓ Switch Casque confirmé, Preamp=" Fmt(p.cur) " dB")
-        ShowOSD("Profil", p.label " (" Fmt(p.cur) " dB)", 2500)
+        ShowOSD(p.label, Fmt(p.cur) " dB", 2500)
     }
 }
